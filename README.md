@@ -30,6 +30,6 @@ current version of system results seen in stat_arb_simulator.py:
 
 Mean profit of 0.35%/day with 0.84% std dev.
 
-Hourly predictions, tested on time periods of significantly different volatility exclusively within the past year.
+Hourly predictions, tested on time periods of significantly different volatility exclusively within the past 14mo.
 
 Win rate ~ 56% over ~300 samples evenly spread across different volatility regimes.
