@@ -1,0 +1,9 @@
+.venv
+venv2
+venv3
+.vscode
+__pycache__
+.DS_Store
+.cursorrules
+.cursorignore
+
