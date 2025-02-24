@@ -27,7 +27,7 @@ def analyze_funding_rate_switches(start_time=None) -> Dict:
     
     # Get data for past month (30 days)
     # Using 3000 second intervals (50 minutes) to get good granularity
-    intervals_needed = int((3 * 24 * 3600) / 3000)  # 3 days worth of 50-minute intervals
+    intervals_needed = int((300 * 24 * 3600) / 3000)  # 3 days worth of 50-minute intervals
     
     funding_rates = []
     current_time = start_time
@@ -35,7 +35,7 @@ def analyze_funding_rate_switches(start_time=None) -> Dict:
     # Fetch data in chunks to avoid too large requests
     chunk_size = 100  # Number of intervals per request
     for _ in range(0, intervals_needed, chunk_size):
-        time.sleep(1)  # Rate limiting
+        time.sleep(3)  # Rate limiting
         
         max_time_unix = int(current_time.timestamp())
         
@@ -82,6 +82,7 @@ def analyze_funding_rate_switches(start_time=None) -> Dict:
     switch_durations = []
     positive_rates = []
     negative_rates = []
+    rates = []
     last_sign = None
     last_switch_time = None
     
@@ -93,7 +94,7 @@ def analyze_funding_rate_switches(start_time=None) -> Dict:
             positive_rates.append(rate)
         else:
             negative_rates.append(rate)
-            
+        rates.append(rate)
         if last_sign is not None and current_sign != last_sign:
             total_switches += 1
             if last_switch_time is not None:
@@ -110,6 +111,10 @@ def analyze_funding_rate_switches(start_time=None) -> Dict:
         "negative_periods": len(negative_rates),
         "avg_positive_rate": sum(positive_rates) / len(positive_rates) if positive_rates else 0,
         "avg_negative_rate": sum(negative_rates) / len(negative_rates) if negative_rates else 0,
+        "std_positive_rate": (sum((x - (sum(positive_rates) / len(positive_rates))) ** 2 for x in positive_rates) / len(positive_rates)) ** 0.5 if positive_rates else 0,
+        "std_negative_rate": (sum((x - (sum(negative_rates) / len(negative_rates))) ** 2 for x in negative_rates) / len(negative_rates)) ** 0.5 if negative_rates else 0,
+        "avg_rate": sum(rates) / len(rates) if rates else 0,
+        "std_rate": (sum((x - (sum(rates) / len(rates))) ** 2 for x in rates) / len(rates)) ** 0.5 if rates else 0,
         "total_samples": len(funding_rates)
     }
 
@@ -122,4 +127,19 @@ if __name__ == "__main__":
     print(f"Number of negative rate periods: {stats['negative_periods']}")
     print(f"Average positive rate: {stats['avg_positive_rate']:.6f}")
     print(f"Average negative rate: {stats['avg_negative_rate']:.6f}")
+    print(f"Standard deviation of positive rate: {stats['std_positive_rate']:.6f}")
+    print(f"Standard deviation of negative rate: {stats['std_negative_rate']:.6f}")
     print(f"Total samples analyzed: {stats['total_samples']}")
+    print(f"Average rate: {stats['avg_rate']:.6f}")
+    print(f"Standard deviation of rate: {stats['std_rate']:.6f}")
+    print(-600077852205 - 1620712129010 * 3)
+    print(11616242444237 + 5250911279712 * 3)
+11006365253631.535156
+27368976283373
+4262058534825
+5250911279712.157227
+1020634276805
+2641346405815
+-600077852205.416626
+-5462214239235
+1620712129010.400391

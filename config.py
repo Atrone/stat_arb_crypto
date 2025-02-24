@@ -1,7 +1,7 @@
 import ccxt
 
 # Configuration
-EXCHANGES = ['bitstamp']  # Add more exchanges as needed
+EXCHANGES = ['vertex']  # Add more exchanges as needed
 TIMEFRAME = '1h'  # Timeframe for OHLCV data
 ARBITRAGE_THRESHOLD = 0  # Minimum arbitrage threshold (0.2%)
 TRADE_SIZE = 100  # Example trade size, adjust as needed

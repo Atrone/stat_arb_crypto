@@ -7,7 +7,7 @@ from datetime import timedelta, datetime
 from random import random
 
 import numpy as np
-import pandas
+import pandas as pd
 from ESRNN import ESRNN
 from ESRNN.utils_evaluation import smape
 import requests
@@ -276,155 +276,115 @@ def get_average_funding_rate(max_time):
 
     return sum(funding_rates) / len(funding_rates) if funding_rates else 0.0
 
+def get_past_month_hourly_data_subprocess(exchange_instance: dict, symbol: str = 'BTC/USDC:USDC') -> list:
+    """
+    Retrieve the past month's hourly OHLCV data using the exchange manager's function,
+    via a subprocess call (using the same technique as other functions in this file).
 
-def simulate(exchange, symbol):
+    :param exchange_instance: Dictionary representing the exchange instance (must include "id")
+    :param symbol: Trading symbol (default 'BTC/USDC:USDC')
+    :return: List of OHLCV data, or an empty list on error.
+    """
+    import json
+    import subprocess
+
+    try:
+        cmd = [
+            PYTHON_PATH,
+            "-c",
+            f'''
+import sys
+sys.path.append(r"{PROJECT_ROOT}")
+import ccxt, json
+from exchanges.exchange_manager import get_past_month_hourly_data
+exchange = getattr(ccxt, "{exchange_instance['id']}")()
+data = get_past_month_hourly_data(exchange, "{symbol}")
+print(json.dumps(data))
+            '''
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout.strip())
+        return data
+    except Exception as e:
+        print(f"Error retrieving hourly data via subprocess: {e}")
+        return []
+
+def simulate(exchange_name: str, symbol: str):
+    """
+    Run the statistical arbitrage simulation with stop loss logic commented out.
+    """
+    print(f"Starting simulation for exchange: {exchange_name} and symbol: {symbol}")
     fear_greed = requests.get('https://api.alternative.me/fng/?limit=0&format=csv').text.split("\n", 3)[3].split('\n')[:-2]
     a = []
 
     for fg in fear_greed[1:-3]:
         a.append({"date": datetime.strptime(fg.split(",")[0], "%d-%m-%Y"), "x": int(fg.split(",")[1])})
 
-    stop_loss_percentage = 0.005
-    stop_loss_percentage_long = 0.01
-
-    print(a)
-
-    import pandas as pd
-
-    df = pd.read_csv("Bitstamp_BTCUSD_1h_4.csv", usecols=[1, 3], names=['ds', 'y'], header=None).iloc[::-1]
-    print(df)
-    df["ds"] = pd.to_datetime(df["ds"], dayfirst=True)
+    # ----- Data Acquisition & Preparation -----
+    # Instead of reading from a CSV, fetch Vertex data:
+    with open(os.path.join(PROJECT_ROOT, "exchanges", "ohlcv_data.txt"), "r") as f:
+        vertex_data = json.load(f)
+    unique_vertex_data = {tuple(item) for item in vertex_data}
+    vertex_data = sorted([list(item) for item in unique_vertex_data], key=lambda x: x[0])
+    print(vertex_data)
+    df = pd.DataFrame(vertex_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df.sort_values(by='timestamp', inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    df['ds'] = pd.to_datetime(df['timestamp'], unit='ms')
     df['date'] = df.ds.dt.date
-    dfx = pandas.DataFrame(a)
+    dfx = pd.DataFrame(a)
     dfx['date'] = dfx.date.astype('datetime64[ns]')
     df['date'] = df.date.astype('datetime64[ns]')
     df = df.merge(right=dfx, on='date', how='left')
+    df['y'] = df['close']
 
-    df = df.sort_values(by="ds")
-    df = df.reset_index()
-    df = df.iloc[:-2]
-    df = df.drop(labels='index', axis=1)
-    df = df.drop(labels='date', axis=1)
-    smapes = []
-    successes = 0
-    failures = 0
-    predictions = 0
-    money = 0
-    successes_list = []
-    failures_list = []
-    trades = 0
-    old_state = 0
+    # ----- Data Splitting for ESRNN -----
+    end = 10
     state = 0
+    old_state = 0
+    trades = 0
     stop_trigger_count = 0
-    end = 1000 # changed from 1000 2024/11/06
-    # THIS IS 6 STOP LOSS TRIGGERS (MAX )
-    for n in range(150, 250):  # 1-45 GOOD (+3100), 45-57 GOOD (-400), 57-83 GOOD (-300), 85-100 GOOD (-350)
-        # (2100 PROFIT ON 1 BTC over 12.5 days)
-        # 120-140 GOOD (+200)
-        # 140-160 GOOD (+700)
-        # 160-200 GOOD (-800)
-        # (2200 PROFIT ON 1 BTC over 25 days)
-        # NEW
-        # 200-500 GOOD (+3300)
-        # NEW
-        # (3300 PROFIT ON 1 BTC over 30 days)
-        # 500-540 GOOD (+650)
-        # 550-580 GOOD (+500)
-        # 580-680 GOOD (+700)
-        # 700-720 GOOD (-400)
-        # 720-740 GOOD (+600)
-        # 740-770 GOOD (+200)
-        # (2250 PROFIT ON 1 BTC over 30 days)
-        # ABOVE IS FOR _1
+    failures = 0
+    money = 0
+    predictions = 0
+    successes = 0
+    failures_list = []
+    successes_list = []
+    smapes = []
 
-        # HERE IS _3:
-        # 1-250 (+4000) # actually +3136
-        # (4000 PROFIT ON 1 BTC over 25 days)
-        # 250-275 (+300) # actually +255
-        # 275-300 (-400)
-        # 300-335 (-1900)
-        # 335-360 (+600)
-        # 360-380 (-900)
-        # 380-425 (-2000)
-        # 425-500 # actually +2335
-        # 54% WIN RATE
-        # KEEP TEST LOSS < 0.002
+    optimization_phase = 0  # focus on 0, then 500, then 1000, etc.
+
+    # sim 1
+    #6484.313917554924
+    #425
+    #92
+    #88
 
 
-
-        # THIS IS limit=0.25, both stop losses=150 @ 0.005 short, 0.01 long, comb hypers:
-        # BELOW THIS IS _3 csv
-        # 1-250 (+4000) # actually +3136 # actually -400 (no short) # actually -50 (no short, old params) # actually 979.8090280744739 (no short, old params, no /2)
-        # # 28
-        # # 0.003950443516706758
-        # # 247.0347545064251
-        # # 168
-        # # 93 (cursor MUST RETUNE ON _3 and _1 (make sure _4 still works))
-        # 250-275 (+300) # actually +255
-        # 275-300 (-400) # actually +67
-        # 300-335 (-1900) # actually -558
-        # 335-360 (+600) # actually +510
-        # 360-380 (-900) # actually -742
-        # 380-425 (-2000) # actually -2000
-        # 425-500 # actually +2335
-        # ABOVE THIS IS _3 csv
-        # BELOW THIS IS _1 csv
-        # 45-57 GOOD (+100) # actually +100 # 1-57 actually -850 (cursor) # actually (no short) -200.779563365448 (early stop at ~45) # actually -23.71162416168788 (no short)
-        # 38
-        # 7
-        # 13
-        # 1-45 GOOD (+258) # actually +258
-        # ABOVE THIS IS _1 csv
-        # BELOW THIS IS _4 csv
-        # 1-45 GOOD (+2122) # actually +2122
-        # 45-100 GOOD (+550) # actually +550 # actually -1400 (cursor (just did it today 11/19 and i did 1-100))
-        # 100-150 GOOD (+1576) # actually +1576
-        # 150-250 GOOD (-4000) # actually -3800 # actually -5818 (cursor (just did it today 11/20 and i did 100-250))
-        # 250-350 GOOD (+4900) # actually +4900
-        # ABOVE THIS IS _4 csv
-        # STILL AROUND 54% WIN RATE
-        # ~1000 samples
-        # BELOW THIS IS _5 csv
-        # 800-900 GOOD (+3900) # actually +3900 # actually +2500 (cursor) # actually +4652 (very low short stop-loss) # actually +900 (no short) # actually -369.01643381947594 (no short, old params, no /2) # actually +840 (perp futures addon 11/23)
-        # 700-800 GOOD (+2800) # actually +2800 # actually +1722 (cursor) # actually +1866.0749741445347 (no short) # actually +1472.8172605049076 (no short, old params, no /2)
-        # 29
-        # 14
-        # 600-700 GOOD (+3330) # actually -1300 (no short) # actually -277 (no short, old params, no /2) # -1353.5936478205615
-        # ABOVE THIS IS _5 csv
-        # 54% WIN RATE
-        # KEEP TEST LOSS < 0.002
-        # KEEP TEST LOSS < 0.001 for each csv (cursor)
+    # sim 2
+    #1917.8585406474976
+    #423
+    #53
+    #49
 
 
-        # this is the i just tried params, funding rate, limit = 0.25, short loss 0.5%, long loss 1%
-        # _3
-        # (1-250) +2381.7747742142883
-        # (250-350) -886.2146842064366
-        # (360-460) -1000.00
-        # _4 
-        #+2044.2080660286929 (1-100)
-        #80
-        #24
-        #14
-        # +6000.00 (250-350)
-        # _5
-        # -1350.00 (600-700)
-        # +967.7458176597763 (700-800)
-        # -207.2085659829528 (800-900)
-        # -1462.2612239729012 (600-700)
-        # _1
-        # 1-50 +717.00
-        # 50-150 +115.59741495211688
-        # _6
-        # 5
-        # 0.02288168562463909
-        # 15
-        # 12393.42631087813
-        # 191
-        # 44
-        # 35
+    # sim 3
+    #-4094.1455496996914
+    #434
+    #36
+    #30
+
+    # sim 4
+    #3454.387306896452
+    #422
+    #27
+    #28
+    daily_returns = []
+    daily_pnl = 0
+    last_date = None
 
 
+    for n in range(-170, 0 + optimization_phase, 1):
         x_train = df.drop(labels='y', axis=1)
         y_train = df.drop(labels='x', axis=1)
         x_train = x_train.iloc[:-(end - n)]
@@ -442,14 +402,21 @@ def simulate(exchange, symbol):
         x_train['unique_id'] = "BTC"
         y_test['unique_id'] = "BTC"
         x_test['unique_id'] = "BTC"
-        limit = statistics.mean(abs(y_train['y'].pct_change().iloc[1:-1].values)) + statistics.stdev(
-            abs(y_train['y'].pct_change().iloc[1:-1].values)) * 0.25
         print(x_train)
         print(y_train)
         print(x_test)
         print(y_test)
 
-
+        # START TUNABLE PARAMETERS
+        stop_loss_percentage = 0.0025
+        stop_loss_percentage_long = 0.0025
+        limit_sd = 1
+        limit = statistics.mean(abs(y_train[:-1]['y'].pct_change().iloc[1:-1].values)) + statistics.stdev(
+            abs(y_train[:-1]['y'].pct_change().iloc[1:-1].values)) * limit_sd
+        funded_rate_sensitity_long = 11616242444237 + 5250911279712 * 1
+        funded_rate_sensitity_short = -600077852205 - 1620712129010 * 1
+        funded_rate_sensitity = 10128288448857.494141
+        
         class constants:
             optimized_hyper_params_for_1_to_45 = {
                 "max_epochs": 200, "learning_rate": 4.5e-3, "seasonality": [24], "lr_decay": 0.925,
@@ -475,175 +442,183 @@ def simulate(exchange, symbol):
                 "per_series_lr_multip": 0.5,
                 "freq_of_test": 5, "batch_size": 1, "output_size": 5
             }
-
             optimized_hyper_params_for_comb = {
                 "max_epochs": 275, "learning_rate": 4.5e-3, "seasonality": [24], "lr_decay": 0.95,
                 "lr_scheduler_step_size": 20,
                 "per_series_lr_multip": 0.5,
                 "freq_of_test": 5, "batch_size": 1, "output_size": 5
             }
+        # END TUNABLE PARAMETERS
 
-
-
+        # ----- ESRNN Model Setup & Training -----
         model = ESRNN(**constants.optimized_hyper_params_for_comb_the_one_i_just_tried)
+        print(x_train[:-1])
+        print(y_train[:-1])
+        print(x_test[:-1])
+        print(y_test[:-1])
+        model.fit(x_train[:-1], y_train[:-1], x_test[:-1], y_test[:-1], verbose=False)
 
-        # Fit model
-        # If y_test_df is provided the model
-        # will evaluate predictions on
-        # this set every freq_test epochs
-        model.fit(x_train, y_train, x_test, y_test, verbose=False)
+        # ----- Forecasting & Simulation Loop -----
         listOfDates = []
-
-        date = x_train['ds'].iloc[-1]
-
+        date = x_train[:-1]['ds'].iloc[-1]
         for i in range(5):
             date += timedelta(hours=1)
             listOfDates.append(date)
-
         data = [{"ds": i,
-                "x": int(df.iloc[n]['x']),
-                "unique_id": "BTC"} for i in listOfDates]
-        y_hat_df = (model.predict(pd.DataFrame(data)))
+                 "x": int(df.iloc[n]['x']),
+                 "unique_id": "BTC"} for i in listOfDates]
+        y_hat_df = model.predict(pd.DataFrame(data))
         y_hat_df = y_hat_df.dropna()
         y_hat_df = y_hat_df.reset_index().drop(labels='index', axis=1)
 
         print(y_hat_df)
-        # print(smape(np.array([y_train['y'][:-1]]), np.array([y_hat_df['y_hat'].iloc[0]])))
         ai_price = y_hat_df['y_hat'][0]
-        print(pd.read_csv("Bitstamp_BTCUSD_1h_4.csv", usecols=[1], names=['y'], header=None)['y'].iloc[::-1].iloc[
-                -(end - n + 3)])
-        print(pd.read_csv("Bitstamp_BTCUSD_1h_4.csv", usecols=[1], names=['y'], header=None)['y'].iloc[::-1].iloc[
-                -(end - n + 2)])
-        real_price_before = \
-            pd.read_csv("Bitstamp_BTCUSD_1h_4.csv", usecols=[3], names=['y'], header=None)['y'].iloc[::-1].iloc[
-                -(end - n + 3)]
-        real_price_after = \
-            pd.read_csv("Bitstamp_BTCUSD_1h_4.csv", usecols=[3], names=['y'], header=None)['y'].iloc[::-1].iloc[
-                -(end - n + 2)]
+        print(df['ds'].iloc[-(end - n + 2)])
+        print(df['ds'].iloc[-(end - n + 1)])
+        real_price_before = df['close'].iloc[-(end - n + 2)]
+        real_price_after = df['close'].iloc[-(end - n + 1)]
         print(real_price_before)
         print(real_price_after)
         print(limit)
-        # When initializing:
-        monitor_created = create_price_monitor(EXCHANGE_INSTANCES['bitstamp'])
 
-        if (abs(real_price_before - ai_price) / real_price_before) > limit:
-            state = 1
-            if state != old_state:
-                trades += 1
-                old_state = state
-            stop_triggered, exit_price = monitor_position(
-                    EXCHANGE_INSTANCES['bitstamp'],
-                    symbol="BTC/USD",
-                    entry_price=real_price_before,
-                    position_type='short' if real_price_before > ai_price else 'long',
-                    stop_loss_pct=stop_loss_percentage if real_price_before > ai_price else stop_loss_percentage_long,
-                    current_time=current_time
-                )
-            print(stop_triggered)
-            print(exit_price)
-            if stop_triggered:
-                state = 0
-                if state != old_state:
-                    trades += 1
-                    old_state = state
-                stop_trigger_count += 1
-                failures += 1
-                money -= abs(exit_price - real_price_before) + real_price_before * fees + real_price_before * slippage
-                continue
-            money += (real_price_after - real_price_before)
-            print(smape(ai_price, real_price_after))
-            smapes.append(smape(ai_price, real_price_after))
-            print(money)
-            print(predictions)
-            print(successes)
-            print(failures)
-            print(successes_list)
-            print(failures_list)
-            print(smapes)
-            continue
-        fees = get_exchange_fees(EXCHANGE_INSTANCES[exchange])[0] / 3
-        slippage = estimate_slippage(EXCHANGE_INSTANCES[exchange], 'BTC/USDC:USDC', real_price_before, 'buy') / 3
+        monitor_created = create_price_monitor(EXCHANGE_INSTANCES['vertex'])
+        fees = get_exchange_fees(EXCHANGE_INSTANCES['vertex'])[0]
+        slippage = estimate_slippage(EXCHANGE_INSTANCES['vertex'], symbol, real_price_before, 'buy')
         print(slippage)
         print(fees)
-        current_time = pd.read_csv("Bitstamp_BTCUSD_1h_4.csv", usecols=[1], names=['ds'], header=None)['ds'].iloc[::-1].iloc[
-        -(end - n + 3)]
+        current_time = str(df['ds'].iloc[-(end - n + 2)])
         avg_funding_rate = get_average_funding_rate(current_time.replace(" ", "T") + "Z")
         print(avg_funding_rate)
-        if real_price_before < ai_price and avg_funding_rate > 0:
+        print(current_time)
+
+        if (abs(real_price_before - ai_price) / real_price_before) > limit:
+            continue
+
+        if real_price_before < ai_price and avg_funding_rate > funded_rate_sensitity_long: # if everyone says long, and we say long, go short
             state = 1
+            fees = 0
+            slippage = 0
             if state != old_state:
                 trades += 1
+                fees = get_exchange_fees(EXCHANGE_INSTANCES['vertex'])[0]
+                slippage = estimate_slippage(EXCHANGE_INSTANCES['vertex'], symbol, real_price_before, 'buy')
                 old_state = state
             if real_price_before < real_price_after:
-                money += abs(real_price_after - real_price_before) - real_price_before * fees - real_price_before * slippage
+                money -= abs(real_price_after - real_price_before) - (real_price_before * fees) - (real_price_before * slippage)
                 successes += 1
                 failures_list.append(0)
                 successes_list.append(1)
             else:
-                stop_triggered, exit_price = monitor_position(
-                    EXCHANGE_INSTANCES['bitstamp'],
-                    symbol="BTC/USD",
-                    entry_price=real_price_before,
-                    position_type='short' if real_price_before > ai_price else 'long',
-                    stop_loss_pct=stop_loss_percentage if real_price_before > ai_price else stop_loss_percentage_long,
-                    current_time=current_time
-                )
-                print(stop_triggered)
-                print(exit_price)
-                if stop_triggered:
-                    state = 0
-                    if state != old_state:
-                        trades += 1
-                        old_state = state
-                    stop_trigger_count += 1
-                    failures += 1
-                    money -= abs(exit_price - real_price_before) + real_price_before * fees + real_price_before * slippage
-                    continue
-                money -= abs(real_price_after - real_price_before) + real_price_before * fees + real_price_before * slippage
+                # ----- Stop Loss Logic Commented Out -----
+                # stop_triggered, exit_price = monitor_position(
+                #     EXCHANGE_INSTANCES['vertex'],
+                #     symbol="BTC/USDC:USDC",
+                #     entry_price=real_price_before,
+                #     position_type='short' if real_price_before > ai_price else 'long',
+                #     stop_loss_pct=stop_loss_percentage if real_price_before > ai_price else stop_loss_percentage_long,
+                #     current_time=current_time
+                # )
+                # print(stop_triggered)
+                # print(exit_price)
+                # if stop_triggered:
+                #     state = 0
+                #     fees = 0
+                #     slippage = 0
+                #     if state != old_state:
+                #         fees = get_exchange_fees(EXCHANGE_INSTANCES['vertex'])[0]
+                #         slippage = estimate_slippage(EXCHANGE_INSTANCES['vertex'], symbol, real_price_before, 'buy')
+                #         trades += 1
+                #         old_state = state
+                #     stop_trigger_count += 1
+                #     failures += 1
+                #     money -= abs(exit_price - real_price_before) + (real_price_before * fees) + (real_price_before * slippage)
+                #     continue
+                money += abs(real_price_after - real_price_before) + (real_price_before * fees) + (real_price_before * slippage)
                 failures += 1
                 failures_list.append(1)
                 successes_list.append(0)
-        elif real_price_before > ai_price and avg_funding_rate < 0:
+        elif real_price_before > ai_price and avg_funding_rate < funded_rate_sensitity_short: # if everyone says short, and we say short, go long
             state = -1
+            fees = 0
+            slippage = 0
             if state != old_state:
+                fees = get_exchange_fees(EXCHANGE_INSTANCES['vertex'])[0]
+                slippage = estimate_slippage(EXCHANGE_INSTANCES['vertex'], symbol, real_price_before, 'buy')
                 trades += 1
                 old_state = state
             if real_price_before > real_price_after:
-                money += abs(real_price_after - real_price_before) - real_price_before * fees - real_price_before * slippage
+                money -= abs(real_price_before - real_price_after) - real_price_before * fees - real_price_before * slippage
                 successes += 1
                 failures_list.append(0)
                 successes_list.append(1)
             else:
-                stop_triggered, exit_price = monitor_position(
-                    EXCHANGE_INSTANCES['bitstamp'],
-                    symbol="BTC/USD",
-                    entry_price=real_price_before,
-                    position_type='short' if real_price_before > ai_price else 'long',
-                    stop_loss_pct=stop_loss_percentage if real_price_before > ai_price else stop_loss_percentage_long,
-                    current_time=current_time
-                )
-                print(stop_triggered)
-                print(exit_price)
-                if stop_triggered:
-                    state = 0
-                    if state != old_state:
-                        trades += 1
-                        old_state = state
-                    stop_trigger_count += 1
-                    failures += 1
-                    money -= abs(exit_price - real_price_before) + real_price_before * fees + real_price_before * slippage
-                    continue
-                money -= abs(real_price_after - real_price_before) + real_price_before * fees + real_price_before * slippage
+                # ----- Stop Loss Logic Commented Out -----
+                # stop_triggered, exit_price = monitor_position(
+                #     EXCHANGE_INSTANCES['vertex'],
+                #     symbol="BTC/USDC:USDC",
+                #     entry_price=real_price_before,
+                #     position_type='short' if real_price_before > ai_price else 'long',
+                #     stop_loss_pct=stop_loss_percentage if real_price_before > ai_price else stop_loss_percentage_long,
+                #     current_time=current_time
+                # )
+                # print(stop_triggered)
+                # print(exit_price)
+                # if stop_triggered:
+                #     state = 0
+                #     fees = 0
+                #     slippage = 0
+                #     if state != old_state:
+                #         trades += 1
+                #         old_state = state
+                #     stop_trigger_count += 1
+                #     failures += 1
+                #     money -= abs(exit_price - real_price_before) + (real_price_before * fees) + (real_price_before * slippage)
+                #     continue
+                money += abs(real_price_before - real_price_after) + (real_price_before * fees) + (real_price_before * slippage)
                 failures += 1
                 failures_list.append(1)
                 successes_list.append(0)
         else:
-            if state == 0:
-                continue
-            elif state == 1:
-                money += (real_price_after - real_price_before)
-            elif state == -1:
-                money -= (real_price_after - real_price_before)
+            state = 0
+            fees = 0
+            slippage = 0
+            if state != old_state:
+                trades += 1
+                fees = get_exchange_fees(EXCHANGE_INSTANCES['vertex'])[0]
+                slippage = estimate_slippage(EXCHANGE_INSTANCES['vertex'], symbol, real_price_before, 'buy')
+                old_state = state
+            # sell everything here
+            pass
+        
+        current_date = df['ds'].iloc[-(end - n + 2)].date()
+        
+        # Track PnL for daily returns calculation
+        trade_pnl = 0
+        if real_price_before < ai_price and avg_funding_rate > funded_rate_sensitity_long:
+            if real_price_before < real_price_after:
+                trade_pnl = -(abs(real_price_after - real_price_before) + (real_price_before * fees) + (real_price_before * slippage))
+            else:
+                trade_pnl = abs(real_price_after - real_price_before) - (real_price_before * fees) - (real_price_before * slippage)
+        elif real_price_before > ai_price and avg_funding_rate < funded_rate_sensitity_short:
+            if real_price_before > real_price_after:
+                trade_pnl = -(abs(real_price_before - real_price_after) + (real_price_before * fees) + (real_price_before * slippage))
+            else:
+                trade_pnl = abs(real_price_before - real_price_after) - (real_price_before * fees) - (real_price_before * slippage)
+        
+        # Calculate daily returns
+        if last_date is None:
+            last_date = current_date
+            daily_pnl = trade_pnl
+        elif current_date != last_date:
+            # Calculate return as percentage of initial price
+            daily_return_pct = (daily_pnl / real_price_before) * 100
+            daily_returns.append(daily_return_pct)
+            # Reset for next day
+            daily_pnl = trade_pnl
+            last_date = current_date
+        else:
+            daily_pnl += trade_pnl
+
         predictions += 1
         print(stop_trigger_count)
         print(smape(ai_price, real_price_after))
@@ -656,6 +631,7 @@ def simulate(exchange, symbol):
         print(successes_list)
         print(failures_list)
         print(smapes)
-
-
-simulate('vertex', 'BTC/USDC:USDC')
+        print(daily_returns)
+        
+if __name__ == "__main__":
+    simulate('vertex', 'BTC/USDC:USDC')

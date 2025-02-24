@@ -7,14 +7,17 @@ from config import (
     TRADE_SIZE,
     EXCHANGE_INSTANCES
 )
-from exchanges.exchange_manager import get_supported_symbols, identify_matching_pairs
+from exchanges.exchange_manager import get_supported_symbols, identify_matching_pairs, get_past_month_hourly_data
 from reports.reporter import generate_report, generate_summary
 
 # Configure logging at the beginning of your script
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(message)s')
 
 def stat_main():
-    exchange_symbols = {name: get_supported_symbols(instance) for name, instance in EXCHANGE_INSTANCES.items()}
+    exchange_symbols = {
+        name: get_supported_symbols(instance)
+        for name, instance in EXCHANGE_INSTANCES.items()
+    }
     for exchange, symbols in exchange_symbols.items():
         for symbol in symbols:
             print(symbol)
@@ -24,6 +27,8 @@ def stat_main():
                 break
             # Process each symbol
     pass
+    for name, instance in EXCHANGE_INSTANCES.items():
+        print(get_past_month_hourly_data(instance))
 
 
 def main():

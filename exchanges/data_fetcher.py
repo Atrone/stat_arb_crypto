@@ -26,11 +26,17 @@ class PriceMonitor:
             if isinstance(current_time, str):
                 current_time = datetime.strptime(current_time, '%Y-%m-%d %H:%M:%S')
             print(current_time)    
-            since = self.exchange.parse8601(current_time.isoformat())
+            until = self.exchange.parse8601(current_time.isoformat())
+            params = {}
+            # If we already have a lower bound from a previous fetch, use it.
+            if current_time is not None:
+                params["until"] = until
+            print(params)
+            print(self.exchange.id)
             ohlcv = self.exchange.fetch_ohlcv(
                 symbol, 
                 '1m', 
-                since=since,
+                params=params,
                 limit=lookback_minutes
             )
             print(ohlcv)
